@@ -1,11 +1,16 @@
-"""SQLite database helpers."""
+"""SQLite database helpers.
 
+The production database lives in data/pipeline.db. Tests can override it with
+JOB_ENGINE_DB_PATH so they never touch local production state.
+"""
+
+import os
 import sqlite3
 import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DB_PATH = ROOT / "data" / "pipeline.db"
+DB_PATH = Path(os.getenv("JOB_ENGINE_DB_PATH", ROOT / "data" / "pipeline.db"))
 SCHEMA_PATH = ROOT / "schema.sql"
 
 
@@ -59,9 +64,7 @@ def add_contact(conn, company_id, name, title, email, confidence, source):
 
 
 def get_contact_for_company(conn, company_id):
-    return conn.execute(
-        "SELECT * FROM contacts WHERE company_id = ? ORDER BY id DESC LIMIT 1", (company_id,)
-    ).fetchone()
+    return conn.execute("SELECT * FROM contacts WHERE company_id = ? ORDER BY id DESC LIMIT 1", (company_id,)).fetchone()
 
 
 def add_outreach_draft(conn, company_id, contact_id, subject, body, template_version="v1"):
@@ -91,7 +94,8 @@ def mark_sent(conn, outreach_id):
 def mark_opened(conn, tracking_id):
     conn.execute(
         """UPDATE outreach SET date_opened = COALESCE(date_opened, datetime('now')), open_count = open_count + 1
-           WHERE tracking_id = ?""", (tracking_id,)
+           WHERE tracking_id = ?""",
+        (tracking_id,),
     )
     conn.commit()
 
@@ -114,10 +118,7 @@ def count_sent_today(conn):
 
 
 def add_reply(conn, outreach_id, from_email, subject, body):
-    cur = conn.execute(
-        "INSERT INTO replies (outreach_id, from_email, subject, body) VALUES (?, ?, ?, ?)",
-        (outreach_id, from_email, subject, body),
-    )
+    cur = conn.execute("INSERT INTO replies (outreach_id, from_email, subject, body) VALUES (?, ?, ?, ?)", (outreach_id, from_email, subject, body))
     conn.commit()
     return cur.lastrowid
 
