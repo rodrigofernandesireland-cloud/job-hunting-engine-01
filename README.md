@@ -1,84 +1,95 @@
 # Job Hunting Engine
 
-A small, local-first job-search assistant. It finds suitable jobs, filters them, finds a contact, drafts a personalized email, lets you review it, and only then sends it.
-
-## The idea
-
-Think of the project as a pipeline:
+Local-first job-search assistant. The production flow is deliberately separate from the test flow:
 
 `jobs -> filter -> contact -> draft -> review -> send -> replies`
 
-SQLite stores the state so you can stop and restart without losing progress. Claude is used only for writing outreach and classifying replies. Email is sent/read through your mailbox.
+## Repository layout
 
-## What is intentionally automatic
-
-- Fetch job listings from the configured sources.
-- Remove jobs that do not match your basic criteria.
-- Find a contact when Hunter is configured; otherwise use a role inbox such as `careers@domain`.
-- Draft short personalized emails.
-- Review drafts before sending.
-- Send approved emails with a daily limit.
-- Check replies and optionally classify them with Claude.
-
-## What is intentionally manual
-
-- Your profile and search criteria.
-- Final approval before sending.
-- Handling interested/ambiguous replies.
-- Choosing whether open tracking is worth using.
-
-Do not enable automatic sending until you have tested the full flow with `--dry-run`.
+```text
+.
+├── main.py                 # functional CLI / orchestration
+├── db.py                   # SQLite persistence
+├── fetch_jobs.py           # RemoteOK + Arbeitnow adapters
+├── find_companies.py       # deterministic job filtering
+├── find_contact.py         # optional Hunter lookup + role inbox fallback
+├── personalize.py          # Claude drafting
+├── review.py               # human approval gate
+├── send_email.py           # SMTP delivery / dry-run
+├── tracker.py              # IMAP replies + optional tracking pixel
+├── follow_up.py
+├── classify_replies.py
+├── schema.sql
+├── config.example.yaml     # safe configuration template
+├── .env.example            # safe secrets template
+├── tests/
+│   ├── unit/               # fast, isolated tests; no network
+│   ├── integration/        # multiple modules, still offline
+│   └── functional/         # CLI smoke tests with isolated DB
+└── data/                   # local runtime data, ignored by git
+```
 
 ## Setup
 
 Requires Python 3.11+.
 
 ```bash
-git clone https://github.com/rodrigofernandesireland-cloud/job-hunting-engine-01.git
-cd job-hunting-engine-01
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\\Scripts\\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env
 cp config.example.yaml config.yaml
 ```
 
-Edit `config.yaml` with your real profile. Put your CV at the path configured by `candidate.cv_path` if you plan to use it.
+`config.yaml` contains your profile and search behaviour. `.env` contains secrets and mailbox credentials. Neither should be committed.
 
-## Secrets
+## Testing strategy
 
-`.env` is for secrets and mailbox/API credentials. It must not be committed.
+The tests must never depend on live job APIs, Claude, Hunter, SMTP or IMAP.
 
-Minimum for drafting:
+### Unit tests
 
-```text
-ANTHROPIC_API_KEY=your_key
+Test pure rules and small components:
+
+```bash
+pytest tests/unit
 ```
 
-For Gmail sending/reading:
+These cover normalization, deduplication, filtering and SQLite behaviour. HTTP responses are mocked.
 
-```text
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=you@gmail.com
-SMTP_PASSWORD=your_google_app_password
-IMAP_HOST=imap.gmail.com
-IMAP_PORT=993
-IMAP_USER=you@gmail.com
-IMAP_PASSWORD=your_google_app_password
+### Integration tests
+
+Exercise several application modules together, but with fake API payloads:
+
+```bash
+pytest tests/integration
 ```
 
-Use a Gmail App Password, not your normal Google password. Hunter and Adzuna are optional.
+### Functional CLI tests
 
-## First test
+Exercise the real CLI process while forcing the database into a temporary location:
 
-Initialize the database:
+```bash
+pytest tests/functional
+```
+
+### Everything used by CI
+
+```bash
+pytest -m "not live"
+```
+
+Live tests, if added later, should be explicitly marked with `@pytest.mark.live` and never be required for a normal pull request.
+
+## Functional operation
+
+Initialize:
 
 ```bash
 python main.py init
 ```
 
-Run each stage manually while testing:
+Then run stages explicitly during the first setup:
 
 ```bash
 python main.py fetch
@@ -89,52 +100,79 @@ python main.py review
 python main.py send --dry-run
 ```
 
-Only after the dry run looks correct should you send:
+Only after reviewing the dry-run should you send real mail:
 
 ```bash
 python main.py send
 ```
 
-You can also run the basic pipeline in one command:
+The all-in-one command is available once the individual stages are trusted:
 
 ```bash
 python main.py run
 ```
 
-For a fully unattended run, use `--auto-approve` only if you accept the risk of sending AI-generated messages without a human review step.
+## Job sources
 
-## Replies and follow-ups
+The default fetcher uses public RemoteOK and Arbeitnow endpoints. Their responses are normalized into the internal job shape before being written to SQLite. A failure in one source is reported without preventing the other source from running.
 
-Check the mailbox:
+Fetching does **not** call Claude, find contacts or send email. This separation makes the fetcher easy to test and safe to run repeatedly.
 
-```bash
-python main.py check-replies
-python main.py classify-replies
-python main.py follow-up
+## Configuration
+
+Keep behaviour in `config.yaml`:
+
+- candidate profile
+- target job titles
+- excluded seniority terms
+- remote/location rules
+- enabled job sources
+- daily email limit
+- follow-up timing
+- Claude model
+
+Keep secrets in `.env`:
+
+```text
+ANTHROPIC_API_KEY=
+HUNTER_API_KEY=
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@example.com
+SMTP_PASSWORD=your_app_password_here
+IMAP_HOST=imap.gmail.com
+IMAP_PORT=993
+IMAP_USER=you@example.com
+IMAP_PASSWORD=your_app_password_here
+TRACKING_BASE_URL=
 ```
 
-Follow-ups are drafted, not immediately sent. Review them with `python main.py review`.
+For Gmail, use an App Password rather than your normal account password.
 
-## Open tracking
+## Safety model
 
-Open tracking requires the tracking server to be reachable by the recipient's email client. `localhost` will not work for external recipients.
+The intended path is:
 
-Start it locally with:
+`fetch -> filter -> contact -> draft -> human review -> approved -> send`
 
-```bash
-python main.py track-server
+Sending only processes rows already marked `approved`. `send --dry-run` never connects to SMTP. Start with a small daily limit and review generated messages before increasing it.
+
+Role-based email guessing is low confidence. Prefer verified contacts and manually review addresses before sending.
+
+Open tracking is optional and inherently unreliable. Reply collection through IMAP works independently.
+
+## Database isolation for tests
+
+Production defaults to:
+
+```text
+data/pipeline.db
 ```
 
-Then set `TRACKING_BASE_URL` to a public HTTPS address if you deploy the server. If you do not need open tracking, leave the server disabled; reply tracking works independently through IMAP.
+Tests can set:
 
-## Important implementation notes
+```text
+JOB_ENGINE_DB_PATH=/temporary/path/pipeline.db
+```
 
-- The repository currently uses SQLite and local files; there is no web UI or background scheduler.
-- The code uses package-style relative imports in several modules, so the CLI should be the normal entry point rather than executing those modules directly.
-- `schema.sql` is the canonical schema. Keep it beside the Python files unless you deliberately change the database path.
-- Role-based email guessing is low confidence. Prefer verified contacts and review addresses before sending.
-- Email open tracking is inherently unreliable because many mail clients proxy or block tracking images.
-
-## Recommended operating model
-
-Start with 5–10 approved emails/day. Review every generated message. Increase volume only after you have validated the job filters, contact quality, email wording, and unsubscribe handling.
+This prevents test runs from modifying production data and also makes CLI tests deterministic.
