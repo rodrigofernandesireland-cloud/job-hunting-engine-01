@@ -1,12 +1,6 @@
-"""
-Helper stage: REVIEW
-Prints all draft emails so you can eyeball them before they go out, then
-lets you approve individually or in bulk. This is your quality gate — the
-personalize stage is good but not infallible, and a bad email to a real
-company is worse than no email.
-"""
+"""Review and approve generated outreach drafts."""
 
-from . import db
+import db
 
 
 def run(config, auto_approve=False):
@@ -47,6 +41,5 @@ def run(config, auto_approve=False):
             conn.commit()
         elif choice == "q":
             break
-        # "s" or anything else: leave as draft, move on
 
     conn.close()
