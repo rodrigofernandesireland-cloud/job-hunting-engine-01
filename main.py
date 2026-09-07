@@ -1,7 +1,6 @@
 """Command-line entry point for the job hunting engine."""
 
 import argparse
-import os
 from pathlib import Path
 
 import yaml
@@ -22,28 +21,29 @@ ROOT = Path(__file__).resolve().parent
 
 
 def load_config(path="config.yaml"):
-    config_path = ROOT / path
+    """Load a user config relative to the repository, never the current cwd."""
+    config_path = Path(path)
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
     if not config_path.exists():
-        raise SystemExit(
-            f"Missing {config_path}. Copy config.example.yaml to config.yaml and edit it."
-        )
+        raise SystemExit(f"Missing {config_path}. Copy config.example.yaml to config.yaml and edit it.")
     with config_path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def run_pipeline(config):
+def run_pipeline(config, auto_approve=False, dry_run=False):
+    """Run the functional pipeline. Tests should call individual stages with mocks."""
     db.init_db()
     fetch_jobs.run(config)
     find_companies.run(config)
     find_contact.run(config)
     personalize.run(config)
-    review.run(config)
-    send_email.run(config)
+    review.run(config, auto_approve=auto_approve)
+    send_email.run(config, dry_run=dry_run)
 
 
 def main():
     load_dotenv(ROOT / ".env")
-
     parser = argparse.ArgumentParser(description="Simple job hunting outreach engine")
     parser.add_argument("command", choices=[
         "init", "fetch", "filter", "contacts", "draft", "review", "send",
@@ -53,7 +53,6 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--auto-approve", action="store_true")
     args = parser.parse_args()
-
     config = load_config(args.config)
 
     if args.command == "init":
@@ -79,9 +78,7 @@ def main():
     elif args.command == "track-server":
         tracker.serve()
     elif args.command == "run":
-        if args.auto_approve:
-            config.setdefault("outreach", {})["auto_approve"] = True
-        run_pipeline(config)
+        run_pipeline(config, auto_approve=args.auto_approve, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
