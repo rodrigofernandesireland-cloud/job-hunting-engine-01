@@ -1,20 +1,13 @@
+import db
 import find_companies
 
 
 def test_title_matches_accepts_configured_role():
-    assert find_companies.title_matches(
-        "Junior Software Developer",
-        ["junior developer"],
-        ["senior", "lead"],
-    )
+    assert find_companies.title_matches("Junior Software Developer", ["junior developer"], ["senior", "lead"])
 
 
 def test_title_matches_rejects_senior_roles():
-    assert not find_companies.title_matches(
-        "Senior Software Developer",
-        ["junior developer"],
-        ["senior", "lead"],
-    )
+    assert not find_companies.title_matches("Senior Software Developer", ["junior developer"], ["senior", "lead"])
 
 
 def test_region_matches_remote_when_remote_only():
@@ -28,38 +21,14 @@ def test_region_matches_accepts_configured_non_remote_region():
 
 
 def test_filter_run_updates_database(test_db, base_config):
-    conn = __import__("db").get_connection()
-    __import__("db").add_company(
-        conn,
-        "Good Co",
-        "good.example",
-        "test",
-        "Junior Developer",
-        "https://good.example/job/1",
-        "This is a sufficiently detailed job description for the test.",
-        "Remote - Ireland",
-        "python",
-    )
-    __import__("db").add_company(
-        conn,
-        "Bad Co",
-        "bad.example",
-        "test",
-        "Senior Developer",
-        "https://bad.example/job/1",
-        "This is a sufficiently detailed job description for the test.",
-        "Remote - Ireland",
-        "python",
-    )
+    conn = db.get_connection()
+    db.add_company(conn, "Good Co", "good.example", "test", "Junior Developer", "https://good.example/job/1", "This is a sufficiently detailed job description for the test.", "Remote - Ireland", "python")
+    db.add_company(conn, "Bad Co", "bad.example", "test", "Senior Developer", "https://bad.example/job/1", "This is a sufficiently detailed job description for the test.", "Remote - Ireland", "python")
     conn.close()
 
     find_companies.run(base_config)
 
-    conn = __import__("db").get_connection()
+    conn = db.get_connection()
     rows = conn.execute("SELECT name, status FROM companies ORDER BY name").fetchall()
     conn.close()
-
-    assert [(r["name"], r["status"]) for r in rows] == [
-        ("Bad Co", "filtered_out"),
-        ("Good Co", "filtered_in"),
-    ]
+    assert [(r["name"], r["status"]) for r in rows] == [("Bad Co", "filtered_out"), ("Good Co", "filtered_in")]
