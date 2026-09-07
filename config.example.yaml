@@ -1,3 +1,5 @@
+# Copy this file to config.yaml. config.yaml is local and ignored by git.
+
 candidate:
   name: "Your Name"
   email: "you@example.com"
@@ -28,7 +30,7 @@ search:
   sources:
     remoteok: true
     arbeitnow: true
-    weworkremotely: true
+    weworkremotely: false
     adzuna: false
 
 outreach:
