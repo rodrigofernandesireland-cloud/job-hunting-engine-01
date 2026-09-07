@@ -1,34 +1,31 @@
 import db
 import fetch_jobs
 import find_companies
+import pytest
 
 
+@pytest.mark.integration
 def test_offline_fetch_to_filter_flow(test_db, base_config, monkeypatch):
-    remoteok_payload = [
-        {
-            "id": 100,
-            "position": "Junior Developer",
-            "company": "Example Ltd",
-            "company_url": "https://example.com",
-            "location": "Remote - Ireland",
-            "url": "https://remoteok.com/remote-jobs/100",
-            "description": "Build and maintain software with a small engineering team.",
-            "tags": ["python", "remote"],
-        }
-    ]
-    arbeitnow_payload = {"data": []}
+    remoteok_payload = [{
+        "id": 100,
+        "position": "Junior Developer",
+        "company": "Example Ltd",
+        "company_url": "https://example.com",
+        "location": "Remote - Ireland",
+        "url": "https://remoteok.com/remote-jobs/100",
+        "description": "Build and maintain software with a small engineering team.",
+        "tags": ["python", "remote"],
+    }]
 
     def fake_request(url, params=None):
         if url == fetch_jobs.REMOTEOK_URL:
             return remoteok_payload
         if url == fetch_jobs.ARBEITNOW_URL:
-            return arbeitnow_payload
+            return {"data": []}
         raise AssertionError(f"unexpected URL: {url}")
 
     monkeypatch.setattr(fetch_jobs, "_request_json", fake_request)
-    inserted = fetch_jobs.run(base_config)
-
-    assert inserted == 1
+    assert fetch_jobs.run(base_config) == 1
 
     find_companies.run(base_config)
 
