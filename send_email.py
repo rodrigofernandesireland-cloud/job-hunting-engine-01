@@ -1,11 +1,8 @@
-"""
-Stage 5: SEND
-Sends 'approved' outreach emails via SMTP, respecting the daily send limit
-and send-window hours from config.yaml. Embeds a 1x1 tracking pixel so
-Stage 6 (tracker) can detect opens.
+"""Stage 5: SEND
 
-IMPORTANT: run `python main.py review` first and approve drafts (or set
-auto_approve in config) — this stage only sends what's already 'approved'.
+Send approved outreach emails via SMTP, respecting daily limits and the
+configured send window. Open tracking is optional and can be disabled by
+omitting TRACKING_BASE_URL.
 """
 
 import os
@@ -15,7 +12,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from . import db
+import db
 
 
 def within_send_window(config):
@@ -25,10 +22,7 @@ def within_send_window(config):
 
 
 def build_message(config, outreach_row, contact_row, from_email):
-    tracking_base = os.getenv("TRACKING_BASE_URL", "http://localhost:5000")
-    pixel_url = f"{tracking_base}/track/{outreach_row['tracking_id']}.png"
-
-    html_body = outreach_row["body"].replace("\n", "<br>") + f'<img src="{pixel_url}" width="1" height="1" style="display:none">'
+    tracking_base = os.getenv("TRACKING_BASE_URL")
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = outreach_row["subject"]
@@ -36,7 +30,15 @@ def build_message(config, outreach_row, contact_row, from_email):
     msg["To"] = contact_row["email"]
 
     msg.attach(MIMEText(outreach_row["body"], "plain"))
-    msg.attach(MIMEText(html_body, "html"))
+
+    if tracking_base:
+        tracking_base = tracking_base.rstrip("/")
+        pixel_url = f"{tracking_base}/track/{outreach_row['tracking_id']}.png"
+        html_body = outreach_row["body"].replace("\n", "<br>") + (
+            f'<img src="{pixel_url}" width="1" height="1" style="display:none">'
+        )
+        msg.attach(MIMEText(html_body, "html"))
+
     return msg
 
 
@@ -53,13 +55,13 @@ def run(config, dry_run=False):
         return
 
     if not within_send_window(config) and not dry_run:
-        print("Outside configured send window (config.yaml -> outreach.send_window_hours). Skipping.")
+        print("Outside configured send window. Skipping.")
         conn.close()
         return
 
     to_send = db.get_approved(conn)[:remaining]
     if not to_send:
-        print("No approved drafts to send. Run `python main.py review` to approve some first.")
+        print("No approved drafts to send. Run `python main.py review` first.")
         conn.close()
         return
 
@@ -75,7 +77,7 @@ def run(config, dry_run=False):
 
     server = None
     if not dry_run:
-        server = smtplib.SMTP(smtp_host, smtp_port)
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
         server.starttls()
         server.login(smtp_user, smtp_password)
 
@@ -97,7 +99,7 @@ def run(config, dry_run=False):
                 db.mark_sent(conn, outreach_row["id"])
                 print(f"Sent to {contact_row['email']} ({outreach_row['subject']})")
                 sent += 1
-                time.sleep(3)  # small delay between sends, easier on SMTP providers
+                time.sleep(3)
             except Exception as e:
                 print(f"  Failed to send to {contact_row['email']}: {e}")
                 conn.execute("UPDATE outreach SET status = 'failed' WHERE id = ?", (outreach_row["id"],))
