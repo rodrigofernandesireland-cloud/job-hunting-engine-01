@@ -20,12 +20,12 @@ Local-first job-search assistant. The production flow is deliberately separate f
 ├── follow_up.py
 ├── classify_replies.py
 ├── schema.sql
-├── config.example.yaml     # safe configuration template
-├── .env.example            # safe secrets template
+├── config.example.yaml
+├── .env.example
 ├── tests/
 │   ├── unit/               # fast, isolated tests; no network
 │   ├── integration/        # multiple modules, still offline
-│   └── functional/         # CLI smoke tests with isolated DB
+│   └── functional/         # real CLI with isolated DB
 └── data/                   # local runtime data, ignored by git
 ```
 
@@ -45,41 +45,25 @@ cp config.example.yaml config.yaml
 
 ## Testing strategy
 
-The tests must never depend on live job APIs, Claude, Hunter, SMTP or IMAP.
-
-### Unit tests
-
-Test pure rules and small components:
+Normal tests never call live job APIs, Claude, Hunter, SMTP or IMAP.
 
 ```bash
+# Fast isolated tests
 pytest tests/unit
-```
 
-These cover normalization, deduplication, filtering and SQLite behaviour. HTTP responses are mocked.
-
-### Integration tests
-
-Exercise several application modules together, but with fake API payloads:
-
-```bash
+# Offline multi-component tests
 pytest tests/integration
-```
 
-### Functional CLI tests
-
-Exercise the real CLI process while forcing the database into a temporary location:
-
-```bash
+# CLI smoke tests using a temporary database
 pytest tests/functional
-```
 
-### Everything used by CI
-
-```bash
+# CI/default suite
 pytest -m "not live"
 ```
 
-Live tests, if added later, should be explicitly marked with `@pytest.mark.live` and never be required for a normal pull request.
+Unit tests mock HTTP responses and use temporary SQLite databases. Integration tests exercise multiple modules with fake payloads. Functional tests execute `main.py` as a subprocess while `JOB_ENGINE_DB_PATH` points to a temporary database.
+
+If live-service tests are added later, mark them `@pytest.mark.live` and keep them out of the default CI suite.
 
 ## Functional operation
 
@@ -89,7 +73,7 @@ Initialize:
 python main.py init
 ```
 
-Then run stages explicitly during the first setup:
+First run each stage explicitly:
 
 ```bash
 python main.py fetch
@@ -100,36 +84,21 @@ python main.py review
 python main.py send --dry-run
 ```
 
-Only after reviewing the dry-run should you send real mail:
+Only after reviewing the dry run should you send real mail:
 
 ```bash
 python main.py send
 ```
 
-The all-in-one command is available once the individual stages are trusted:
+Once the stages are trusted, the pipeline can be run together:
 
 ```bash
 python main.py run
 ```
 
-## Job sources
-
-The default fetcher uses public RemoteOK and Arbeitnow endpoints. Their responses are normalized into the internal job shape before being written to SQLite. A failure in one source is reported without preventing the other source from running.
-
-Fetching does **not** call Claude, find contacts or send email. This separation makes the fetcher easy to test and safe to run repeatedly.
-
 ## Configuration
 
-Keep behaviour in `config.yaml`:
-
-- candidate profile
-- target job titles
-- excluded seniority terms
-- remote/location rules
-- enabled job sources
-- daily email limit
-- follow-up timing
-- Claude model
+Keep behaviour in `config.yaml`: candidate profile, target roles, exclusions, locations, enabled job sources, daily limits and follow-up rules.
 
 Keep secrets in `.env`:
 
@@ -149,6 +118,12 @@ TRACKING_BASE_URL=
 
 For Gmail, use an App Password rather than your normal account password.
 
+## Job sources
+
+The default fetcher uses public RemoteOK and Arbeitnow endpoints. Their responses are normalized into one internal job shape before being written to SQLite. A failure in one source is reported without preventing the other source from running.
+
+Fetching does not call Claude, find contacts or send email.
+
 ## Safety model
 
 The intended path is:
@@ -161,13 +136,9 @@ Role-based email guessing is low confidence. Prefer verified contacts and manual
 
 Open tracking is optional and inherently unreliable. Reply collection through IMAP works independently.
 
-## Database isolation for tests
+## Database isolation
 
-Production defaults to:
-
-```text
-data/pipeline.db
-```
+Production defaults to `data/pipeline.db`.
 
 Tests can set:
 
@@ -175,4 +146,4 @@ Tests can set:
 JOB_ENGINE_DB_PATH=/temporary/path/pipeline.db
 ```
 
-This prevents test runs from modifying production data and also makes CLI tests deterministic.
+This keeps tests away from production data and also makes CLI tests deterministic.
