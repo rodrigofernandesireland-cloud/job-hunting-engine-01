@@ -1,37 +1,20 @@
-"""
-Stage 8: CLASSIFY RESPONSES
-Uses Claude to read each unclassified reply and tag it as one of:
-  interested / not_interested / auto_reply / needs_human / unsubscribe
-
-This lets you triage your inbox fast: jump straight to 'interested' replies,
-ignore auto-replies, and honor unsubscribe requests (stops all future
-follow-ups to that contact).
-"""
+"""Stage 8: classify incoming replies with Claude."""
 
 import os
 from anthropic import Anthropic
 
-from . import db
+import db
 
 VALID_LABELS = {"interested", "not_interested", "auto_reply", "needs_human", "unsubscribe"}
 
-SYSTEM_PROMPT = """You classify email replies to a job-search outreach campaign. \
-Read the reply and respond with EXACTLY ONE WORD from this list, nothing else:
-
-interested       - they want to talk further, see a CV, or schedule something
-not_interested   - a polite decline, no current openings, "we'll keep you on file", etc.
-auto_reply       - out-of-office, autoresponder, "no longer at this address", etc.
-needs_human      - anything ambiguous, a question you can't safely auto-answer, or unusual
-unsubscribe      - they explicitly ask not to be contacted again
-
-Respond with only the single label word."""
+SYSTEM_PROMPT = """Classify a job-search email reply. Respond with exactly one label:
+interested, not_interested, auto_reply, needs_human, unsubscribe.
+Use needs_human for ambiguity. Use unsubscribe only for an explicit request not to be contacted again."""
 
 
 def classify_one(client, config, reply_body):
     response = client.messages.create(
-        model=config["claude"]["model"],
-        max_tokens=10,
-        temperature=0,
+        model=config["claude"]["model"], max_tokens=10, temperature=0,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": reply_body[:3000]}],
     )
@@ -48,7 +31,6 @@ def run(config):
     client = Anthropic(api_key=api_key)
     conn = db.get_connection()
     unclassified = db.get_unclassified_replies(conn)
-
     if not unclassified:
         print("No unclassified replies.")
         conn.close()
@@ -59,20 +41,13 @@ def run(config):
         label = classify_one(client, config, reply["body"] or reply["subject"] or "")
         db.classify_reply(conn, reply["id"], label)
         counts[label] = counts.get(label, 0) + 1
-
-        if label == "unsubscribe":
-            # Prevent any future follow-ups to this contact
+        if label == "unsubscribe" and reply["outreach_id"]:
             conn.execute(
                 """UPDATE outreach SET status = 'do_not_contact'
-                   WHERE contact_id = (
-                       SELECT contact_id FROM outreach WHERE id = ?
-                   )""",
+                   WHERE contact_id = (SELECT contact_id FROM outreach WHERE id = ?)""",
                 (reply["outreach_id"],),
             )
             conn.commit()
 
     conn.close()
     print(f"Classified {len(unclassified)} replies: {counts}")
-    if counts.get("interested"):
-        print(f"\n{counts['interested']} INTERESTED replies — check these first! "
-              f"Query: SELECT * FROM replies WHERE classification='interested';")
