@@ -29,21 +29,32 @@ def hunter_domain_search(domain, api_key, preferred_titles):
             if pref.lower() in position:
                 return {
                     "name": f"{item.get('first_name', '')} {item.get('last_name', '')}".strip() or None,
-                    "title": item.get("position"), "email": item.get("value"),
+                    "title": item.get("position"),
+                    "email": item.get("value"),
                     "confidence": "verified" if item.get("verification", {}).get("status") == "valid" else "guessed_high",
+                    "source": "hunter",
                 }
+
     top = emails[0]
     return {
         "name": f"{top.get('first_name', '')} {top.get('last_name', '')}".strip() or None,
-        "title": top.get("position"), "email": top.get("value"),
+        "title": top.get("position"),
+        "email": top.get("value"),
         "confidence": "verified" if top.get("verification", {}).get("status") == "valid" else "guessed_low",
+        "source": "hunter",
     }
 
 
 def pattern_guess_role_email(domain):
     if not domain:
         return None
-    return {"name": None, "title": "Careers / Hiring Team", "email": f"careers@{domain}", "confidence": "guessed_low"}
+    return {
+        "name": None,
+        "title": "Careers / Hiring Team",
+        "email": f"careers@{domain}",
+        "confidence": "guessed_low",
+        "source": "pattern_fallback",
+    }
 
 
 def run(config):
@@ -53,19 +64,29 @@ def run(config):
     preferred_titles = config.get("contact_finding", {}).get("preferred_titles", [])
     found = fallback = skipped = 0
 
-    for company in companies:
-        contact = None
-        if api_key and company["domain"]:
-            contact = hunter_domain_search(company["domain"], api_key, preferred_titles)
-            if contact:
-                contact["source"] = "hunter"; found += 1
-        if not contact and company["domain"]:
-            contact = pattern_guess_role_email(company["domain"])
-            fallback += 1
-        if not contact:
-            skipped += 1
-            continue
-        db.add_contact(conn, company["id"], contact["name"], contact["title"], contact["email"], contact["confidence"], contact["source"])
+    try:
+        for company in companies:
+            contact = None
+            if api_key and company["domain"]:
+                contact = hunter_domain_search(company["domain"], api_key, preferred_titles)
+                if contact:
+                    found += 1
+            if not contact and company["domain"]:
+                contact = pattern_guess_role_email(company["domain"])
+                fallback += 1
+            if not contact:
+                skipped += 1
+                continue
+            db.add_contact(
+                conn,
+                company["id"],
+                contact["name"],
+                contact["title"],
+                contact["email"],
+                contact["confidence"],
+                contact["source"],
+            )
+    finally:
+        conn.close()
 
-    conn.close()
     print(f"Contact search done. {found} via Hunter.io, {fallback} via pattern fallback, {skipped} skipped.")
